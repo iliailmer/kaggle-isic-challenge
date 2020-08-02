@@ -1,7 +1,3 @@
-# TODO SENet, ResNeSt101, EfficientNet
-# TODO: resnest50_256, resnest50_224_no_hair, resnest101_224, efficientnet-b2_224,efficientnet-b2_256 (all with metadata)
-# TODO Average multiple resnets+Efficient nets
-
 import argparse
 import os
 
@@ -101,20 +97,10 @@ sample_submission = pd.read_csv(
     '../input/isic/stratified/sample_submission.csv')
 meta_features = metadata_train[[
     'sex', 'age_approx', 'anatom_site_general_challenge']].values.astype(np.float32)
-# meta_features = meta_features/meta_features.max(axis=0)
+
 meta_features_test = metadata_test[[
     'sex', 'age_approx', 'anatom_site_general_challenge']].values.astype(np.float32)
-# meta_features_test = meta_features_test/meta_features_test.max(axis=0)
 
-# with open("images_targets_stratified_256.npy", "rb") as f:
-#     images_train = np.load(f, allow_pickle=True)
-# print("Training Data: done")
-# with open("images_test_stratified_256.npy", "rb") as f:
-#     images_test = np.load(f, allow_pickle=True)
-# print("Test Data: done")
-
-
-# kfold = StratifiedKFold()
 kfold = KFold(n_splits=5, shuffle=True, random_state=42)
 
 runner = SupervisedRunner()
@@ -144,7 +130,6 @@ if __name__ == "__main__":
         X_val = metadata_train.loc[metadata_train.tfrecord.isin(idxV)]
 
         print(f'Fold: {fold}, {len(X_train)}')
-        # sampler = BalanceClassSampler(X_train.target.values, mode="upsampling")
 
         model = ENet('efficientnet-b2')  # Model(resnest101(True))  #
 
@@ -170,7 +155,6 @@ if __name__ == "__main__":
         )
         loaders = {'train': DataLoader(
             train_dataset,
-            # sampler=sampler,
             shuffle=True,
             batch_size=args.bs,
             num_workers=args.nw
