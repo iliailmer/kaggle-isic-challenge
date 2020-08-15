@@ -98,14 +98,18 @@ def to_tensor(x):
 def get_train_augm(size=Tuple[int, int],
                    p=0.5):
     return albu.Compose([
-        albu.OneOf([
-            albu.CLAHE(6, (4, 4), always_apply=True),
-            albu.Equalize(always_apply=True)], p=0.99),
+        albu.Resize(*size),
+        albu.ShiftScaleRotate(p=p),
+        # albu.GridDistortion(p=p),
+        # albu.OneOf([
+        #     albu.CLAHE(6, (4, 4), always_apply=True),
+        #     albu.Equalize(always_apply=True)], p=0.99),
         albu.HorizontalFlip(p=p),
         albu.VerticalFlip(p=p),
-        albu.HueSaturationValue(p=p),
-        albu.RandomBrightnessContrast(p=p),
+        # albu.HueSaturationValue(p=p),
+        # albu.RandomBrightnessContrast(p=p),
         albu.Rotate(p=p),
+        albu.PadIfNeeded(*size),
         albu.ToFloat(255),
         ToTensorV2()  # albu.Lambda(image=to_tensor)
     ])

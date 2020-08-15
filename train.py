@@ -14,23 +14,17 @@ from catalyst.dl.callbacks import (AccuracyCallback, AUCCallback,
                                    CriterionCallback, CutmixCallback,
                                    EarlyStoppingCallback, F1ScoreCallback,
                                    MetricAggregationCallback, MixupCallback,
-                                   OptimizerCallback)
+                                   OptimizerCallback,
+                                   PrecisionRecallF1ScoreCallback)
 from catalyst.utils import prepare_cudnn, set_global_seed
-from imblearn import over_sampling
-from pretrainedmodels.models import (resnext101_64x4d, se_resnet101,
-                                     se_resnext50_32x4d)
-from pytorch_toolbelt.inference.tta import (TTAWrapper, d4_image2label,
-                                            tencrop_image2label)
-from pytorch_toolbelt.losses import (FocalLoss, SoftBCEWithLogitsLoss,
-                                     SoftCrossEntropyLoss)
-from resnest.torch import resnest50, resnest101, resnest200, resnest269
+from pytorch_toolbelt.losses import FocalLoss
 from sklearn.model_selection import KFold, StratifiedKFold
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import WeightedRandomSampler
 from torchsampler import ImbalancedDatasetSampler
-from torchvision.models import resnet101, resnext50_32x4d, resnext101_32x8d
 from tqdm import auto as tqdm
-
+from ttach import ClassificationTTAWrapper
+from ttach.aliases import d4_transform, flip_transform
 from dataset import DataFromImages, SkinData, get_train_augm, get_valid_augm
 from models import ENet, Model
 
@@ -123,6 +117,7 @@ def callback_get_label(dataset: DataFromImages, idx):
     return dataset.__getitem__(idx)['targets']
 
 
+sizes = [(224, 224), (192, 192), (128, 128), (256, 256), (160, 160)]
 # from imblearn.over_sampling import
 if __name__ == "__main__":
     for fold, (idxT, idxV) in enumerate(kfold.split(np.arange(15))):
@@ -131,10 +126,11 @@ if __name__ == "__main__":
 
         print(f'Fold: {fold}, {len(X_train)}')
 
-        model = ENet('efficientnet-b2')  # Model(resnest101(True))  #
+        # ENet('efficientnet-b3')  #
+        model = ENet('efficientnet-b4')
 
-        criterion = FocalLoss()
-        optimizer = Lookahead(torch.optim.AdamW(
+        criterion = FocalLossBinary()  # FocalLoss()
+        optimizer = Lookahead(RAdam(
             model.parameters(), lr=args.lr, weight_decay=args.wd))
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, patience=3, factor=0.5)
@@ -143,7 +139,7 @@ if __name__ == "__main__":
         train_dataset = SkinData(
             metadata_df=X_train,
             path=train_path,
-            tfms=get_train_augm(None, p=0.5),
+            tfms=get_train_augm(size=sizes[fold], p=0.67),
             meta_features=X_train[[
                 'sex', 'age_approx', 'anatom_site_general_challenge']].values.astype(np.float32))
         val_dataset = SkinData(
@@ -170,11 +166,12 @@ if __name__ == "__main__":
         # break
         callbacks = [
             # CutmixCallback(),
+            CriterionCallback(input_key='targets_one_hot'),
             OptimizerCallback(accumulation_steps=args.acc,
                               metric_key="loss"),
             AUCCallback(input_key="targets_one_hot"),
             AccuracyCallback(num_classes=2),
-            EarlyStoppingCallback(metric="loss", patience=5)
+            EarlyStoppingCallback(metric="loss", patience=15)
         ]
         kwargs = dict(model=model,
                       criterion=criterion,
@@ -185,10 +182,10 @@ if __name__ == "__main__":
                       logdir=logdir,
                       num_epochs=args.e,
                       verbose=True,
+                      #   fp16=dict(opt_level="O1"),
                       main_metric="auc/_mean",
                       minimize_metric=False)
         runner.train(**kwargs)
-
         model.load_state_dict(torch.load(
             f'{logdir}/checkpoints/best.pth')['model_state_dict'])
         model.eval()
@@ -203,26 +200,37 @@ if __name__ == "__main__":
             im_h = kornia.augmentation.F.hflip(im)
 
             im_v = kornia.augmentation.F.vflip(im)
-            y_pred = 0.6*model(im, meta) + 0.2 * \
-                model(im_v, meta)+0.2*model(im_h, meta)
+
+            # im_ = kornia.augmentation.F.rotate(im, torch.tensor([90]))
+
+            y_pred = 0.8*model(im, meta) + 0.1 * \
+                model(im_v, meta)+0.1*model(im_h, meta)
 
             oof_predictions.loc[oof_predictions['image_name']
                                 == metadata_test.image_name.values[step], f'fold_{fold+1}'] = torch.nn.functional.softmax(y_pred, dim=1).detach().cpu().numpy()[:, 1]
         oof_predictions.to_csv("oof_predictions.csv", index=False)
         print(oof_predictions.iloc[:, 1])
     sample_submission['target'] = np.median(
-        oof_predictions[[f'fold_{fold+1}' for i in range(kfold.n_splits)]].values, axis=1)
+        oof_predictions[[f'fold_{i+1}' for i in range(kfold.n_splits)]].values, axis=1)
     sample_submission.to_csv(
         f'submission_{args.name}_median.csv', index=False)
     sample_submission['target'] = np.mean(
-        oof_predictions[[f'fold_{fold+1}' for i in range(kfold.n_splits)]].values, axis=1)
+        oof_predictions[[f'fold_{i+1}' for i in range(kfold.n_splits)]].values, axis=1)
     sample_submission.to_csv(
         f'submission_{args.name}_mean.csv', index=False)
+    sample_submission['target'] = oof_predictions.iloc[:,
+                                                       1:kfold.n_splits].values.prod(axis=1)**(1/kfold.n_splits)
+    sample_submission.to_csv(
+        f'submission_{args.name}_geom_mean.csv', index=False)
     os.system(
         f"kaggle competitions submit -c siim-isic-melanoma-classification -f" +
         f" submission_{args.name}_median.csv " +
-        "-m 'ResNeSt50-meidan'")
+        f"-m '{args.name}'")
     os.system(
         f"kaggle competitions submit -c siim-isic-melanoma-classification -f" +
         f" submission_{args.name}_mean.csv " +
-        "-m 'ResNeSt50-mean'")
+        f"-m '{args.name}'")
+    os.system(
+        f"kaggle competitions submit -c siim-isic-melanoma-classification -f" +
+        f" submission_{args.name}_geom_mean.csv " +
+        f"-m '{args.name}'")

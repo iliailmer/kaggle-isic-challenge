@@ -30,13 +30,29 @@ class Model(nn.Module):
         # nn.Sequential(nn.Linear(2048+3, 128),
         #                                 nn.PReLU(),
         #                                 nn.Linear(128, 2))
+
+        # self.meta_clf = nn.Sequential(nn.Linear(3, 16),
+        #                               Swish(),
+        #                               nn.Linear(16, 8),
+        #                               nn.PReLU(),
+        #                               nn.Linear(8, 3),
+        #                               Swish())
         nn.init.xavier_uniform_(self.classifier.weight)
+        # self.init(self.meta_clf)
+
         # nn.init.xavier_uniform_(self.classifier[2].weight)
+
+    def init(self, layer: nn.Sequential):
+        for m in layer.modules():
+            if isinstance(m, nn.Linear):
+                torch.nn.init.kaiming_uniform_(m.weight)
+                torch.nn.init.zeros_(m.bias)
 
     def forward(self, features, meta_features):
         """Run Forward pass."""
         features = self.features(features)
         features = features.view(features.shape[0], -1)
+        # meta_features = self.meta_clf(meta_features)
         features = torch.cat([features, meta_features], dim=1)
         features = self.classifier(features)
 
@@ -80,6 +96,7 @@ class ENet(nn.Module):
                                       nn.PReLU(),
                                       nn.Linear(8, 3),
                                       Swish())
+        self.init(self.meta_clf)
 
     def forward(self, features, meta_features):
         features = self.model.extract_features(features)
@@ -89,6 +106,12 @@ class ENet(nn.Module):
         features = torch.cat([features, meta_features], dim=1)
         features = self.dense_output(features)
         return features
+
+    def init(self, layer):
+        for m in layer.modules():
+            if isinstance(m, nn.Linear):
+                torch.nn.init.kaiming_uniform_(m.weight)
+                torch.nn.init.zeros_(m.bias)
 
 
 class HarmonicBlock(nn.Module):
